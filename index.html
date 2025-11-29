@@ -1,0 +1,310 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width,initial-scale=1" />
+  <title>Enhanced Todo List</title>
+  <style>
+    :root{
+      --primary:#2b7cff;
+      --muted:#666;
+      --bg:#f7f9fc;
+      --card:#ffffff;
+      --success:#16a34a;
+    }
+    *{box-sizing:border-box}
+    body{
+      font-family: Inter, system-ui, -apple-system, "Segoe UI", Roboto, "Helvetica Neue", Arial;
+      background:var(--bg);
+      margin:0;
+      padding:24px;
+      display:flex;
+      justify-content:center;
+      color:#111;
+    }
+    .app {
+      width:100%;
+      max-width:800px;
+      background:var(--card);
+      border-radius:12px;
+      padding:20px;
+      box-shadow:0 6px 20px rgba(20,30,60,0.08);
+    }
+    h1{margin:0 0 8px 0}
+    .controls{
+      display:flex;
+      gap:8px;
+      margin:14px 0 18px 0;
+      align-items:center;
+      flex-wrap:wrap;
+    }
+    input[type="text"], .search {
+      flex:1 1 300px;
+      padding:10px 12px;
+      font-size:15px;
+      border-radius:8px;
+      border:1px solid #e3e8ef;
+      outline:none;
+    }
+    .btn {
+      background:var(--primary);
+      color:white;
+      border:none;
+      padding:10px 14px;
+      border-radius:8px;
+      cursor:pointer;
+      font-weight:600;
+    }
+    .btn.secondary{
+      background:white;
+      color:var(--primary);
+      border:1px solid var(--primary);
+    }
+    .meta { color:var(--muted); font-size:13px; margin-top:6px;}
+    ul.todo-list{
+      list-style:none;
+      padding:0;
+      margin:12px 0 0 0;
+      max-height:420px;
+      overflow:auto;
+    }
+    li.todo {
+      display:flex;
+      align-items:center;
+      gap:10px;
+      padding:12px;
+      border-radius:8px;
+      margin-bottom:8px;
+      background:linear-gradient(180deg, rgba(250,250,253,1), rgba(246,247,250,1));
+      border:1px solid #eef2f7;
+    }
+    .todo .text { flex:1; font-size:15px; word-break:break-word }
+    .todo .text.completed{ text-decoration:line-through; color:var(--muted) }
+    .todo .actions { display:flex; gap:8px; align-items:center }
+    .pill { font-size:13px; padding:6px 8px; border-radius:6px; border:none; cursor:pointer;}
+    .pill.remove{ background:transparent; color:#e11d48; border:1px solid rgba(225,29,72,0.08) }
+    .pill.complete{ background:transparent; color:var(--success); border:1px solid rgba(20,150,70,0.08) }
+    .no-tasks{ text-align:center; color:var(--muted); padding:24px 8px }
+    .small{ font-size:13px; color:var(--muted); margin-top:8px }
+    .count{font-weight:700}
+    /* responsive */
+    @media (max-width:480px){
+      .controls{flex-direction:column; align-items:stretch}
+      .btn{width:100%}
+    }
+  </style>
+</head>
+<body>
+  <main class="app" role="main" aria-labelledby="title">
+    <h1 id="title">Enhanced Todo List</h1>
+    <p class="meta">Add tasks, mark them complete, remove them, search in real time — all saved to <code>localStorage</code>.</p>
+
+    <div class="controls" aria-label="Add task">
+      <input id="taskInput" type="text" placeholder="Type a new task and press Add or Enter" aria-label="New task" />
+      <button id="addBtn" class="btn">Add</button>
+      <input id="searchInput" class="search" type="text" placeholder="Search tasks..." aria-label="Search tasks" />
+      <button id="clearAllBtn" class="btn secondary" title="Clear all tasks">Clear All</button>
+    </div>
+
+    <div class="small">Matches: <span id="matchCount" class="count">0</span> · Total: <span id="totalCount" class="count">0</span></div>
+
+    <ul id="todoList" class="todo-list" aria-live="polite"></ul>
+
+    <div id="emptyState" class="no-tasks" hidden>
+      No tasks yet. Add your first task above.
+    </div>
+  </main>
+
+  <script>
+    /**********************
+     * Enhanced Todo App
+     * - Uses localStorage key: 'todos'
+     * - Task shape: { id: string, text: string, completed: boolean }
+     **********************/
+
+    const STORAGE_KEY = "todos";
+
+    // DOM refs
+    const taskInput = document.getElementById("taskInput");
+    const addBtn = document.getElementById("addBtn");
+    const searchInput = document.getElementById("searchInput");
+    const todoList = document.getElementById("todoList");
+    const emptyState = document.getElementById("emptyState");
+    const matchCountEl = document.getElementById("matchCount");
+    const totalCountEl = document.getElementById("totalCount");
+    const clearAllBtn = document.getElementById("clearAllBtn");
+
+    // In-memory list of todos (keeps single source of truth)
+    let todos = [];
+
+    // Utility: generate reasonably unique ID
+    function uid() {
+      return Date.now().toString(36) + Math.random().toString(36).slice(2,8);
+    }
+
+    // Persist todos to localStorage
+    function saveTodos() {
+      try {
+        localStorage.setItem(STORAGE_KEY, JSON.stringify(todos));
+      } catch (err) {
+        console.error("Failed to save todos:", err);
+      }
+    }
+
+    // Load todos from localStorage
+    function loadTodos() {
+      const raw = localStorage.getItem(STORAGE_KEY);
+      if (!raw) return [];
+      try {
+        const parsed = JSON.parse(raw);
+        if (Array.isArray(parsed)) return parsed;
+      } catch (err) {
+        console.warn("Invalid todos in storage; resetting.", err);
+      }
+      return [];
+    }
+
+    // Add a new todo (validates non-empty)
+    function addTodo(text) {
+      const trimmed = (text || "").trim();
+      if (!trimmed) return false;
+      const newTodo = { id: uid(), text: trimmed, completed: false };
+      todos.unshift(newTodo); // newest on top
+      saveTodos();
+      render(); // re-render UI
+      return true;
+    }
+
+    // Toggle completion for a todo id
+    function toggleTodo(id) {
+      todos = todos.map(t => t.id === id ? { ...t, completed: !t.completed } : t);
+      saveTodos();
+      render();
+    }
+
+    // Remove a specific todo
+    function removeTodo(id) {
+      todos = todos.filter(t => t.id !== id);
+      saveTodos();
+      render();
+    }
+
+    // Clear all todos
+    function clearAllTodos() {
+      if (!confirm("Clear all tasks? This cannot be undone.")) return;
+      todos = [];
+      saveTodos();
+      render();
+    }
+
+    // Render the visible (filtered) list based on search text
+    function render() {
+      const query = searchInput.value.trim().toLowerCase();
+      // filter by query
+      const visible = todos.filter(t => t.text.toLowerCase().includes(query));
+      // clear existing nodes
+      todoList.innerHTML = "";
+
+      // update counters
+      matchCountEl.textContent = visible.length;
+      totalCountEl.textContent = todos.length;
+
+      if (visible.length === 0) {
+        emptyState.hidden = todos.length > 0; // show message only if no matches and no todos
+        // if there are todos but no matches, show a helpful message
+        if (todos.length > 0) {
+          emptyState.hidden = false;
+          emptyState.textContent = "No matching tasks. Try a different search.";
+        } else {
+          emptyState.textContent = "No tasks yet. Add your first task above.";
+        }
+      } else {
+        emptyState.hidden = true;
+      }
+
+      // Create DOM nodes for visible todos
+      for (const t of visible) {
+        const li = document.createElement("li");
+        li.className = "todo";
+        li.setAttribute("data-id", t.id);
+        li.setAttribute("role", "listitem");
+
+        const textEl = document.createElement("div");
+        textEl.className = "text" + (t.completed ? " completed" : "");
+        textEl.textContent = t.text;
+        textEl.title = t.text;
+        // allow double-click to toggle complete
+        textEl.addEventListener("dblclick", () => toggleTodo(t.id));
+
+        // actions container
+        const actions = document.createElement("div");
+        actions.className = "actions";
+
+        const completeBtn = document.createElement("button");
+        completeBtn.className = "pill complete";
+        completeBtn.title = t.completed ? "Mark as incomplete" : "Mark as complete";
+        completeBtn.textContent = t.completed ? "Undo" : "Done";
+        completeBtn.addEventListener("click", () => toggleTodo(t.id));
+
+        const removeBtn = document.createElement("button");
+        removeBtn.className = "pill remove";
+        removeBtn.title = "Remove task";
+        removeBtn.textContent = "Remove";
+        removeBtn.addEventListener("click", () => {
+          if (confirm("Remove this task?")) removeTodo(t.id);
+        });
+
+        actions.appendChild(completeBtn);
+        actions.appendChild(removeBtn);
+
+        li.appendChild(textEl);
+        li.appendChild(actions);
+        todoList.appendChild(li);
+      }
+    }
+
+    // Wire UI events
+    addBtn.addEventListener("click", () => {
+      const success = addTodo(taskInput.value);
+      if (success) {
+        taskInput.value = "";
+        taskInput.focus();
+      } else {
+        // quick feedback
+        taskInput.focus();
+      }
+    });
+
+    // allow pressing Enter to add
+    taskInput.addEventListener("keydown", (e) => {
+      if (e.key === "Enter") {
+        e.preventDefault();
+        addBtn.click();
+      }
+    });
+
+    // search updates in real time
+    searchInput.addEventListener("input", () => {
+      render();
+    });
+
+    // clear all button
+    clearAllBtn.addEventListener("click", clearAllTodos);
+
+    // init: load todos and render
+    (function init() {
+      todos = loadTodos();
+      render();
+    })();
+
+    // Optional: accessibility improvement — focus management for keyboard users
+    // If user presses "/" while not in an input, focus the search box (like many apps)
+    window.addEventListener("keydown", (e) => {
+      if (e.key === "/" && document.activeElement.tagName !== "INPUT" && document.activeElement.tagName !== "TEXTAREA") {
+        e.preventDefault();
+        searchInput.focus();
+      }
+    });
+  </script>
+</body>
+</html>
